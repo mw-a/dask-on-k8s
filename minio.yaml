@@ -1,0 +1,21 @@
+accessKey: AKIAIOSFODNN7EXAMPLE
+secretKey: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+service:
+  type: LoadBalancer
+  port: 80
+environment:
+  MINIO_IDENTITY_OPENID_CONFIG_URL: "http://192.168.122.91/auth/realms/example.org/.well-known/openid-configuration"
+  MINIO_IDENTITY_OPENID_CLIENT_ID: "minio"
+  # can minio do standard authorization code flow?
+  #MINIO_IDENTITY_OPENID_CLIENT_SECRET: "9823c909-5c92-47c4-b17f-c1bf64461256"
+image:
+  # avoid min disk space error by using newer image that has this check removed already
+  tag: RELEASE.2021-02-01T22-56-52Z
+buckets:
+  - name: dask
+    policy: none
+persistence:
+  size: 1Gi
+resources:
+  requests:
+    memory: 50Mi
