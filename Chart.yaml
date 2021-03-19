@@ -1,0 +1,12 @@
+apiVersion: v2
+version: 0.0.1
+appVersion: v0.1
+name: dask-on-k8s
+#metadata:
+#  namespace: spark-cluster
+
+dependencies:
+  - name: daskhub
+    version: 4.5.7
+    repository: https://helm.dask.org/
+    alias: daskhub

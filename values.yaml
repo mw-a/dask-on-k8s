@@ -1,0 +1,193 @@
+daskhub:
+  jupyterhub:
+    proxy:
+      secretToken: "88c3c97ba7e69593b661f4bb0ba3f28395c81dd8297ae859d3d39c81bdc982a1"
+  #    chp:
+  #      extraCommandLineFlags:
+  #      - --log-level=debug
+    singleuser:
+      image:
+        # s3fs
+        name: mwa4/base-notebook
+        tag: 2020.11.06-boto3
+    hub:
+      config:
+        Authenticator:
+          allowed_users:
+          - oauthuser
+          - admin
+          admin_users:
+          - admin
+      image:
+        # boto3
+        name: mwa4/k8s-hub
+        tag: 0.11.1-boto3
+      # prevent timeouts on callbacks from dask gateway into jupyterhub because
+      # of active network policy
+      # https://github.com/dask/helm-chart/issues/142
+      networkPolicy:
+        enabled: false
+      services:
+        dask-gateway:
+          apiToken: "77a50bc4cac5e26c0a6423748318e37f1db2416476abb9733de58508781f8e72"
+      extraEnv:
+        OAUTH_CALLBACK_URL: "http://192.168.122.90/hub/oauth_callback"
+        OAUTH2_AUTHORIZE_URL: "http://192.168.122.91/auth/realms/example.org/protocol/openid-connect/auth"
+        OAUTH2_TOKEN_URL: "http://192.168.122.91/auth/realms/example.org/protocol/openid-connect/token"
+      extraConfig:
+        oauth2.py: |
+          from oauthenticator.generic import GenericOAuthenticator
+          from tornado import gen
+          from kubernetes.client.models import V1Secret, V1ObjectMeta
+          from kubernetes.client.rest import ApiException
+          from kubernetes.client import V1DeleteOptions
+          import boto3
+          import base64
+
+          def post_auth_hook(authenticator, handler, authentication):
+            authenticator.access_token = authentication['auth_state']['access_token']
+            return authentication
+
+          c.Authenticator.post_auth_hook = post_auth_hook
+
+          class KubeGenericOAuthenticator(GenericOAuthenticator):
+              def __init__(self, **kwargs):
+                  super().__init__(**kwargs)
+                  self.access_token = None
+
+              @gen.coroutine
+              def pre_spawn_start(self, user, spawner):
+                  sts_client = boto3.client(
+                      'sts',
+                      region_name='us-east-1',
+                      use_ssl=False,
+                      endpoint_url='http://192.168.122.92',
+                  )
+
+                  response = sts_client.assume_role_with_web_identity(
+                      RoleArn='arn:aws:iam::123456789012:user/svc-internal-api',
+                      RoleSessionName='test',
+                      WebIdentityToken=self.access_token,
+                      DurationSeconds=3600
+                  )
+
+                  access_key = response['Credentials']['AccessKeyId']
+                  secret_key = response['Credentials']['SecretAccessKey']
+                  session_token = response['Credentials']['SessionToken']
+
+                  # add to notebook environment directly
+                  spawner.environment['AWS_ACCESS_KEY_ID'] = access_key
+                  spawner.environment['AWS_SECRET_ACCESS_KEY'] = secret_key
+                  spawner.environment['AWS_SESSION_TOKEN'] = session_token
+
+                  secret_name = "dask-secrets-%s" % user.escaped_name
+
+                  secret = V1Secret()
+                  secret.kind = "Secret"
+                  secret.api_version = "v1"
+                  secret.metadata = V1ObjectMeta()
+                  secret.metadata.name = secret_name
+                  #secret.metadata.annotations = (annotations or {}).copy()
+                  #secret.metadata.labels = (labels or {}).copy()
+                  #secret.metadata.owner_references = owner_references
+
+                  secret.data = {}
+                  secret.data['keycloak-access-token'] = base64.encodebytes(self.access_token.encode('ascii')).decode('ascii')
+                  secret.data['s3a-access-key'] = base64.encodebytes(access_key.encode('ascii')).decode('ascii')
+                  secret.data['s3a-secret-key'] = base64.encodebytes(secret_key.encode('ascii')).decode('ascii')
+                  secret.data['s3a-session-token'] = base64.encodebytes(session_token.encode('ascii')).decode('ascii')
+
+                  try:
+                      yield spawner.asynchronize(
+                          spawner.api.delete_namespaced_secret,
+                          name=secret_name,
+                          namespace=spawner.namespace,
+                          body=V1DeleteOptions())
+                  except ApiException as e:
+                      if e.status != 404:
+                          raise
+
+                  yield spawner.asynchronize(
+                      spawner.api.create_namespaced_secret,
+                      spawner.namespace,
+                      secret)
+
+          c.JupyterHub.authenticator_class = KubeGenericOAuthenticator
+
+          c.KubeGenericOAuthenticator.login_service = "keycloak"
+          c.KubeGenericOAuthenticator.client_id = "jupyter"
+          c.KubeGenericOAuthenticator.client_secret = "5f143785-8c14-4405-8281-e4318683223e"
+          c.KubeGenericOAuthenticator.token_url = "http://192.168.122.91/auth/realms/example.org/protocol/openid-connect/token"
+          c.KubeGenericOAuthenticator.userdata_url = "http://192.168.122.91/auth/realms/example.org/protocol/openid-connect/userinfo"
+          c.KubeGenericOAuthenticator.userdata_method = 'GET'
+          c.KubeGenericOAuthenticator.userdata_params = {'state': 'state'}
+          c.KubeGenericOAuthenticator.username_key = 'preferred_username'
+
+  dask-gateway:
+    gateway:
+  #    loglevel: DEBUG
+      auth:
+  #      type: jupyterhub
+        jupyterhub:
+          apiToken: "77a50bc4cac5e26c0a6423748318e37f1db2416476abb9733de58508781f8e72"
+  #  traefik:
+  #    loglevel: DEBUG
+  #    dashboard: true
+      extraConfig:
+        user-credentials: |
+          from dask_gateway_server.options import Options
+
+          def options_handler(options, user):
+              secret_name = "dask-secrets-%s" % user.name
+
+              c.KubeClusterConfig.worker_extra_container_config = {
+                  'env': [{
+                    'name': 'AWS_ACCESS_KEY_ID',
+                    'valueFrom': {
+                       'secretKeyRef': {
+                         'name': secret_name,
+                         'key': 's3a-access-key',
+                       }
+                    }
+                  },{
+                    'name': 'AWS_SECRET_ACCESS_KEY',
+                    'valueFrom': {
+                       'secretKeyRef': {
+                         'name': secret_name,
+                         'key': 's3a-secret-key',
+                       }
+                    }
+                  },{
+                    'name': 'AWS_SESSION_TOKEN',
+                    'valueFrom': {
+                       'secretKeyRef': {
+                         'name': secret_name,
+                         'key': 's3a-session-token',
+                       }
+                    }
+                  }
+                ]}
+
+              return {}
+
+          c.Backend.cluster_options = Options(handler=options_handler)
+
+      backend:
+        image:
+          # s3fs
+          name: mwa4/dask-gateway
+          tag: 0.9.0-s3fs
+        scheduler:
+          cores:
+            request: 0.1
+            limit: 1
+          memory:
+            request: "100M"
+            limit: "2G"
+        worker:
+          cores:
+            request: 0.1
+            limit: 1
+          memory:
+            request: "100M"
+            limit: "2G"

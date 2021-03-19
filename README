@@ -31,7 +31,7 @@ jupyterhub:
         c.KubeGenericOAuthenticator.token_url = "http://192.168.122.91/auth/realms/example.org/protocol/openid-connect/token"
         c.KubeGenericOAuthenticator.userdata_url = "http://192.168.122.91/auth/realms/example.org/protocol/openid-connect/userinfo"
 
-helm upgrade --install --render-subchart-notes dhub dask/daskhub --values=dask.yaml
+helm upgrade --install --render-subchart-notes dhub .
 
 Jupyterhub needs to be allowed to create secrets. This can be done manually by
 editing the role to include secrets resources alongside pods after helm has run:
@@ -58,4 +58,4 @@ To do this, the daskhub chart can be unpacked into a subdirectory charts and
 helm be run on the patched chart by changing the chart reference to
 charts/daskhub:
 
-helm upgrade --debug --install --render-subchart-notes dhub charts/daskhub --values=dask.yaml
+helm upgrade --debug --install --render-subchart-notes dhub .
