@@ -1,3 +1,17 @@
+---
+gssproxy:
+  debug_level: 3
+  services:
+    # NOTE: service drop file names need to start with two digits and dash for
+    # gssproxy to accept them
+    50-jupyter:
+      configFile: "files/gssproxy/jupyter.conf"
+      # object needs to be granted delegation to any protocol in AD
+      keytabFile: "files/gssproxy/jupyter.keytab"
+
+jupyter:
+  krb5ConfigFile: "files/krb5.conf"
+
 daskhub:
   jupyterhub:
     proxy:
@@ -9,7 +23,46 @@ daskhub:
       image:
         # s3fs
         name: mwa4/base-notebook
-        tag: 2020.11.06-boto3
+        tag: 11
+      extraEnv:
+        GSS_USE_PROXY: "yes"
+        GSSPROXY_SOCKET: "/run/gssproxy/jupyter.sock"
+      storage:
+        extraVolumeMounts:
+        - name: krb5-config
+          mountPath: "/etc/krb5.conf"
+          subPath: "krb5.conf"
+          readOnly: true
+        - name: gssproxy-sockets
+          mountPath: /run/gssproxy
+        extraVolumes:
+        - name: krb5-config
+          configMap:
+            name: krb5-config
+        - name: gssproxy-configs
+          configMap:
+            name: gssproxy-configs
+        - name: gssproxy-keytabs
+          secret:
+            secretName: gssproxy-keytabs
+        - name: gssproxy-sockets
+          emptyDir: {}
+      extraContainers:
+      - name: gssproxy
+        image: mwa4/gssproxy:1.0.10
+        volumeMounts:
+        - name: krb5-config
+          mountPath: "/etc/krb5.conf"
+          subPath: "krb5.conf"
+          readOnly: true
+        - name: gssproxy-sockets
+          mountPath: /run/gssproxy
+        - name: gssproxy-configs
+          mountPath: /etc/gssproxy
+          readOnly: true
+        - name: gssproxy-keytabs
+          mountPath: /secrets/keytabs
+          readOnly: true
     hub:
       config:
         Authenticator:
@@ -80,6 +133,17 @@ daskhub:
                   spawner.environment['AWS_SECRET_ACCESS_KEY'] = secret_key
                   spawner.environment['AWS_SESSION_TOKEN'] = session_token
 
+                  for c in spawner.extra_containers:
+                    if c['name'] != "gssproxy":
+                      continue
+
+                    if 'env' not in c:
+                      c['env'] = []
+
+                    c['env'].append({
+                      'name': 'GSSPROXY_CREATE_USERS',
+                      'value': '%s=1000' % user.escaped_name})
+
                   secret_name = "dask-secrets-%s" % user.escaped_name
 
                   secret = V1Secret()
@@ -124,15 +188,15 @@ daskhub:
           c.KubeGenericOAuthenticator.username_key = 'preferred_username'
 
   dask-gateway:
+  #  traefik:
+  #    loglevel: DEBUG
+  #     dashboard: true
     gateway:
   #    loglevel: DEBUG
       auth:
   #      type: jupyterhub
         jupyterhub:
           apiToken: "77a50bc4cac5e26c0a6423748318e37f1db2416476abb9733de58508781f8e72"
-  #  traefik:
-  #    loglevel: DEBUG
-  #    dashboard: true
       extraConfig:
         user-credentials: |
           from dask_gateway_server.options import Options
@@ -140,8 +204,8 @@ daskhub:
           def options_handler(options, user):
               secret_name = "dask-secrets-%s" % user.name
 
-              c.KubeClusterConfig.worker_extra_container_config = {
-                  'env': [{
+              c.KubeClusterConfig.worker_extra_container_config['env'].extend(
+                  [{
                     'name': 'AWS_ACCESS_KEY_ID',
                     'valueFrom': {
                        'secretKeyRef': {
@@ -166,7 +230,18 @@ daskhub:
                        }
                     }
                   }
-                ]}
+              ])
+
+              for cont in c.KubeClusterConfig.worker_extra_pod_config['containers']:
+                if cont['name'] != "gssproxy":
+                  continue
+
+                if 'env' not in cont:
+                  cont['env'] = []
+
+                cont['env'].append({
+                  'name': 'GSSPROXY_CREATE_USERS',
+                  'value': '%s=1000' % user.name})
 
               return {}
 
@@ -176,7 +251,7 @@ daskhub:
         image:
           # s3fs
           name: mwa4/dask-gateway
-          tag: 0.9.0-s3fs
+          tag: 2
         scheduler:
           cores:
             request: 0.1
@@ -191,3 +266,45 @@ daskhub:
           memory:
             request: "100M"
             limit: "2G"
+          extraContainerConfig:
+            env:
+            - name: GSS_USE_PROXY
+              value: "yes"
+            - name: GSSPROXY_SOCKET
+              value: "/run/gssproxy/jupyter.sock"
+            volumeMounts:
+            - name: krb5-config
+              mountPath: "/etc/krb5.conf"
+              subPath: "krb5.conf"
+              readOnly: true
+            - name: gssproxy-sockets
+              mountPath: /run/gssproxy
+          extraPodConfig:
+            volumes:
+            - name: krb5-config
+              configMap:
+                name: krb5-config
+            - name: gssproxy-configs
+              configMap:
+                name: gssproxy-configs
+            - name: gssproxy-keytabs
+              secret:
+                secretName: gssproxy-keytabs
+            - name: gssproxy-sockets
+              emptyDir: {}
+            containers:
+            - name: gssproxy
+              image: mwa4/gssproxy:1.0.10
+              volumeMounts:
+              - name: krb5-config
+                mountPath: "/etc/krb5.conf"
+                subPath: "krb5.conf"
+                readOnly: true
+              - name: gssproxy-sockets
+                mountPath: /run/gssproxy
+              - name: gssproxy-configs
+                mountPath: /etc/gssproxy
+                readOnly: true
+              - name: gssproxy-keytabs
+                mountPath: /secrets/keytabs
+                readOnly: true

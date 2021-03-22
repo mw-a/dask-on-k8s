@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gssproxy-keytabs
+type: Opaque
+data:
+  {{- $files := .Files }}
+  {{- range $key, $val := .Values.gssproxy.services }}
+  {{ $key }}.keytab: {{ $files.Get $val.keytabFile | b64enc}}
+  {{- end }}

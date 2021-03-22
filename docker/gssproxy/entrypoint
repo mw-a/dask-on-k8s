@@ -1,0 +1,15 @@
+#!/bin/bash
+
+for uspec in $GSSPROXY_CREATE_USERS ; do
+	un=${uspec%%=*}
+	ui=${uspec#*=}
+
+	[ "$un" != "$uspec" -a -n "$un" -a -n "$ui" ] || break
+
+	# more colons in extracted value
+	[ "${ui}" = "${ui#*:}" ] || break
+
+	useradd -m -u "$ui" "$un"
+done
+
+exec /usr/sbin/gssproxy "$@"

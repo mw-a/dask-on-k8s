@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gssproxy-configs
+data:
+  gssproxy.conf: |
+    [gssproxy]
+    debug_level = {{ .Values.gssproxy.debug_level }}
+  {{- $files := .Files }}
+  {{- range $key, $val := .Values.gssproxy.services }}
+  {{ $key }}.conf: |
+{{ $files.Get $val.configFile | indent 4}}
+  {{- end }}

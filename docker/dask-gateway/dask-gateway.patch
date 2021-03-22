@@ -1,0 +1,14 @@
+git clone https://github.com/dask/dask-gateway
+
+diff --git a/dask-gateway/Dockerfile b/dask-gateway/Dockerfile
+index da94e3b..4aa1777 100644
+--- a/dask-gateway/Dockerfile
++++ b/dask-gateway/Dockerfile
+@@ -1,5 +1,6 @@
+ # ** A base miniconda image **
+-FROM debian:buster-slim as miniconda
++# docker build -t mwa4/dask-gateway-dask:1 .
++FROM debian:testing as miniconda
+ LABEL MAINTAINER="Jim Crist-Harif"
+ 
+ ARG CONDA_VERSION=py38_4.8.3

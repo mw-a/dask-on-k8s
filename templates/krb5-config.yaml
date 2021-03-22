@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: krb5-config
+data:
+  krb5.conf: |
+{{ .Files.Get .Values.jupyter.krb5ConfigFile | indent 4 }}
