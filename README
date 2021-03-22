@@ -32,30 +32,3 @@ jupyterhub:
         c.KubeGenericOAuthenticator.userdata_url = "http://192.168.122.91/auth/realms/example.org/protocol/openid-connect/userinfo"
 
 helm upgrade --install --render-subchart-notes dhub .
-
-Jupyterhub needs to be allowed to create secrets. This can be done manually by
-editing the role to include secrets resources alongside pods after helm has run:
-
-kubectl get role hub -o jsonpath="{.rules[*].resources}{'\n'}"
-["secrets","pods","persistentvolumeclaims"] ["events"]
-
-Alternatively, the RBAC template of jupyterhub helm chart contained within the
-daskhub chart can be patched to create the role that way in the first place:
-
---- ../b/daskhub/charts/jupyterhub/templates/hub/rbac.yaml	2021-01-19 20:27:29.000000000 +0100
-+++ charts/daskhub/charts/jupyterhub/templates/hub/rbac.yaml	2021-03-16 10:59:24.090045723 +0100
-@@ -14,7 +14,7 @@
-     {{- include "jupyterhub.labels" . | nindent 4 }}
- rules:
-   - apiGroups: [""]       # "" indicates the core API group
--    resources: ["pods", "persistentvolumeclaims"]
-+    resources: ["secrets", "pods", "persistentvolumeclaims"]
-     verbs: ["get", "watch", "list", "create", "delete"]
-   - apiGroups: [""]       # "" indicates the core API group
-     resources: ["events"]
-
-To do this, the daskhub chart can be unpacked into a subdirectory charts and
-helm be run on the patched chart by changing the chart reference to
-charts/daskhub:
-
-helm upgrade --debug --install --render-subchart-notes dhub .
