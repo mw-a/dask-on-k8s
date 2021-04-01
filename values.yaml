@@ -49,7 +49,7 @@ daskhub:
           emptyDir: {}
       extraContainers:
       - name: gssproxy
-        image: mwa4/gssproxy:1.0.10
+        image: mwa4/gssproxy:1.0.11
         volumeMounts:
         - name: krb5-config
           mountPath: "/etc/krb5.conf"
@@ -294,7 +294,7 @@ daskhub:
               emptyDir: {}
             containers:
             - name: gssproxy
-              image: mwa4/gssproxy:1.0.10
+              image: mwa4/gssproxy:1.0.11
               volumeMounts:
               - name: krb5-config
                 mountPath: "/etc/krb5.conf"
