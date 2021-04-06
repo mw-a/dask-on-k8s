@@ -44,4 +44,14 @@ RUN conda install -y conda-build && \
 RUN sed -i -e "/^def _get_gssapi_credential/a \\    return None" \
 	/opt/conda/lib/python3.8/site-packages/spnego/gss.py
 
+RUN conda install -c conda-forge -y \
+		path \
+		asammdf \
+		holoviews \
+		prefect \
+		dask-jobqueue \
+		scipy \
+		&& \
+	conda clean -afy
+
 USER 1000:1000
