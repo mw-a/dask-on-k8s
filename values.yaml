@@ -251,7 +251,7 @@ daskhub:
         image:
           # s3fs
           name: mwa4/dask-gateway
-          tag: 3
+          tag: 4
         scheduler:
           cores:
             request: 0.1

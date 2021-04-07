@@ -51,6 +51,7 @@ RUN conda install -c conda-forge -y \
 		prefect \
 		dask-jobqueue \
 		scipy \
+		numpy==1.19.4 \
 		&& \
 	conda clean -afy
 
