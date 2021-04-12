@@ -49,7 +49,7 @@ RUN conda install -y conda-build && \
 		s3fs \
 	&& \
 	conda clean -afy && \
-	rm -rf /opt/conda/conda-bld
+	rm -rf /srv/conda/conda-bld
 
 # explicit gss_acquire_cred even on the default identity breaks
 # gss_init_sec_context final iteration with
@@ -67,5 +67,23 @@ RUN conda install -n notebook -c conda-forge -y \
 		scipy \
 		&& \
 	conda clean -afy
+
+# pysmb
+RUN conda install -n notebook -c conda-forge -y \
+		pysmb \
+		&& \
+	conda clean -afy
+
+# pysmbc
+RUN apt-get update -y && \
+	apt-get install -y libsmbclient-dev pkg-config && \
+	conda skeleton pypi pysmbc && \
+	conda build --no-test pysmbc && \
+	conda install -n notebook -c file:///srv/conda/conda-bld -y pysmbc && \
+	conda install -n notebook -c conda-forge -y pysmbc && \
+	conda clean -afy && \
+	rm -rf /srv/conda/conda-bld && \
+	apt-get clean all && \
+	find /var/cache/apt/archives /var/lib/apt/lists -type f -delete
 
 USER $NB_UID
