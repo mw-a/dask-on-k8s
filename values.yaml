@@ -12,6 +12,10 @@ gssproxy:
 jupyter:
   krb5ConfigFile: "files/krb5.conf"
 
+cifs:
+  user: "adsuser"
+  password: "P@ssw0rd"
+
 daskhub:
   jupyterhub:
     proxy:
@@ -35,6 +39,8 @@ daskhub:
           readOnly: true
         - name: gssproxy-sockets
           mountPath: /run/gssproxy
+        - name: cifs-data
+          mountPath: /cifs-data
         extraVolumes:
         - name: krb5-config
           configMap:
@@ -47,6 +53,15 @@ daskhub:
             secretName: gssproxy-keytabs
         - name: gssproxy-sockets
           emptyDir: {}
+        - name: cifs-data
+          flexVolume:
+            driver: fstab/cifs
+            fsType: cifs
+            secretRef:
+              name: cifs-secret
+            options:
+              networkPath: "//dc.example.org/share"
+              mountOptions: "uid=1000,dir_mode=0700,file_mode=0600,nosharesock"
       extraContainers:
       - name: gssproxy
         image: mwa4/gssproxy:1.0.11
@@ -279,6 +294,8 @@ daskhub:
               readOnly: true
             - name: gssproxy-sockets
               mountPath: /run/gssproxy
+            - name: cifs-data
+              mountPath: /cifs-data
           extraPodConfig:
             volumes:
             - name: krb5-config
@@ -292,6 +309,15 @@ daskhub:
                 secretName: gssproxy-keytabs
             - name: gssproxy-sockets
               emptyDir: {}
+            - name: cifs-data
+              flexVolume:
+                driver: fstab/cifs
+                fsType: cifs
+                secretRef:
+                  name: cifs-secret
+                options:
+                  networkPath: "//dc.example.org/share"
+                  mountOptions: "uid=1000,dir_mode=0700,file_mode=0600,nosharesock"
             containers:
             - name: gssproxy
               image: mwa4/gssproxy:1.0.11
