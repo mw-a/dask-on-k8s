@@ -12,11 +12,11 @@ RUN apt-get update -y && \
 		gssproxy \
 		gcc \
 		libkrb5-dev \
+		krb5-user \
 	&& apt-get clean all \
 	&& find /var/cache/apt/archives /var/lib/apt/lists -type f -delete
 
 # for debugging
-#		krb5-user \
 #		smbclient \
 #		vim \
 #		krb5-user \

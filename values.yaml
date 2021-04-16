@@ -27,7 +27,7 @@ daskhub:
       image:
         # s3fs
         name: mwa4/base-notebook
-        tag: 14
+        tag: 15
       extraEnv:
         GSS_USE_PROXY: "yes"
         GSSPROXY_SOCKET: "/run/gssproxy/jupyter.sock"
@@ -266,7 +266,7 @@ daskhub:
         image:
           # s3fs
           name: mwa4/dask-gateway
-          tag: 5
+          tag: 6
         scheduler:
           cores:
             request: 0.1
