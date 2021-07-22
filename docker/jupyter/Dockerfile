@@ -68,22 +68,4 @@ RUN conda install -n notebook -c conda-forge -y \
 		&& \
 	conda clean -afy
 
-# pysmb
-RUN conda install -n notebook -c conda-forge -y \
-		pysmb \
-		&& \
-	conda clean -afy
-
-# pysmbc
-RUN apt-get update -y && \
-	apt-get install -y libsmbclient-dev pkg-config && \
-	conda skeleton pypi pysmbc && \
-	conda build --no-test pysmbc && \
-	conda install -n notebook -c file:///srv/conda/conda-bld -y pysmbc && \
-	conda install -n notebook -c conda-forge -y pysmbc && \
-	conda clean -afy && \
-	rm -rf /srv/conda/conda-bld && \
-	apt-get clean all && \
-	find /var/cache/apt/archives /var/lib/apt/lists -type f -delete
-
 USER $NB_UID
