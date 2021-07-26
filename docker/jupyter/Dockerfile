@@ -15,6 +15,7 @@ RUN apt-get update -y && \
 		python3-dev \
 		libkrb5-dev \
 		krb5-user \
+		git \
 	&& apt-get clean all \
 	&& find /var/cache/apt/archives /var/lib/apt/lists -type f -delete
 
@@ -57,6 +58,7 @@ RUN conda install -y conda-build && \
 	conda install -n notebook -c conda-forge -y \
 		smbprotocol \
 		s3fs \
+		jupyterlab-git \
 	&& \
 	conda clean -afy && \
 	rm -rf /srv/conda/conda-bld

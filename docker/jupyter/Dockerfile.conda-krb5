@@ -8,6 +8,7 @@ RUN apt-get update -y && \
 	DEBIAN_FRONTEND=noninteractive apt-get install -y \
 		gssproxy \
 		krb5-user \
+		git \
 	&& apt-get clean all \
 	&& find /var/cache/apt/archives /var/lib/apt/lists -type f -delete
 
@@ -22,6 +23,7 @@ RUN conda install -n notebook -c conda-forge -y \
 		python-gssapi \
 		smbprotocol \
 		s3fs \
+		jupyterlab-git \
 		path \
 		asammdf \
 		holoviews \
