@@ -32,13 +32,23 @@ RUN apt-get update -y && \
 # so it does not pollute our gssapi environment
 RUN conda install -y conda-build && \
 	mkdir -p /b && cd /b && \
-	curlurl=https://raw.githubusercontent.com/conda-forge/curl-feedstock/cd26f1b178f1f0acc4327e59504848f1d67f5eec/recipe && \
-	wget -O - $curlurl/meta.yaml | grep -v krb5 > meta.yaml && \
-	wget -O - $curlurl/build.sh | sed -e "/--with-gssapi/s/--with.*/--without-gssapi \\\\/" > build.sh && \
+	git clone https://github.com/conda-forge/postgresql-feedstock && \
+	cd postgresql-feedstock/recipe && \
+	git checkout 1ba4ac43cdc7f4e8d0b41b0991ed6bba4926e728 && \
+	sed -i -e "/krb5/d" meta.yaml && \
+	sed -i -e '/--with-gssapi/s/--with.*/--without-gssapi \\/' \
+		-e '/make check/s/make/: make/' build.sh install_plpython.sh && \
+	conda build --no-test .	&& \
+	cd /b && \
+	git clone https://github.com/conda-forge/curl-feedstock && \
+	cd curl-feedstock/recipe && \
+	git checkout f298befa202e49c9190a6fc6ee3662c8e62cd518 && \
+	sed -i -e "/krb5/d" meta.yaml && \
+	sed -i -e "/--with-gssapi/s/--with.*/--without-gssapi \\\\/" build.sh && \
 	conda build --no-test .	&& \
 	cd / && rm -rf /b && \
 	conda install -c file:///srv/conda/conda-bld -y libcurl && \
-	conda install -n notebook -c file:///srv/conda/conda-bld -y libcurl && \
+	conda install -n notebook -c file:///srv/conda/conda-bld -y libcurl libpq && \
 	conda uninstall -y krb5 && \
 	conda uninstall -n notebook -y krb5 && \
 	conda skeleton pypi gssapi && \

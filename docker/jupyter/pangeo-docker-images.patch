@@ -1,17 +1,23 @@
 git clone https://github.com/pangeo-data/pangeo-docker-images
-git checkout 2020.11.06
+cd pangeo-docker-images
+git checkout 2021.06.05
+patch -p1 < $this_file
+cd base-image
+docker build -t mwa4/base-image:1 .
+cd ../base-notebook
+docker build -t mwa4/base-notebook-pangeo:1 .
 
 diff --git a/base-image/Dockerfile b/base-image/Dockerfile
-index 45dc93d..24f9085 100644
+index ef99294..58d26c0 100644
 --- a/base-image/Dockerfile
 +++ b/base-image/Dockerfile
 @@ -1,4 +1,5 @@
--FROM ubuntu:18.04
+-FROM ubuntu:20.04
 +# docker build -t mwa4/base-image:1 .
 +FROM debian:testing
- # Master build file for pangeo images
+ # build file for pangeo images
  
- # Run this section as root
+ LABEL org.opencontainers.image.source=https://github.com/pangeo-data/pangeo-docker-images
 diff --git a/base-notebook/Dockerfile b/base-notebook/Dockerfile
 index e34f8fb..9d6c805 100644
 --- a/base-notebook/Dockerfile

@@ -44,6 +44,8 @@ RUN conda install -y conda-build && \
 RUN sed -i -e "/^def _get_gssapi_credential/a \\    return None" \
 	/opt/conda/lib/python3.8/site-packages/spnego/gss.py
 
+# match package versions of numpy, dask and distributed with
+# pangeo/base-notebook
 RUN conda install -c conda-forge -y \
 		path \
 		asammdf \
@@ -51,7 +53,9 @@ RUN conda install -c conda-forge -y \
 		prefect \
 		dask-jobqueue \
 		scipy \
-		numpy==1.19.4 \
+		numpy==1.20.3 \
+		dask==2021.6.0 \
+		distributed==2021.6.0 \
 		&& \
 	conda clean -afy
 

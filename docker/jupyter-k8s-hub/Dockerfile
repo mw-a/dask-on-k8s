@@ -1,4 +1,4 @@
-FROM jupyterhub/k8s-hub:0.11.1
+FROM jupyterhub/k8s-hub:1.0.1
 
 LABEL maintainer="Michael Weiser <michael.weiser@atos.net>"
 

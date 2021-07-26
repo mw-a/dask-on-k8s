@@ -7,6 +7,6 @@ name: dask-on-k8s
 
 dependencies:
   - name: daskhub
-    version: 4.5.7
+    version: 2021.7.0
     repository: https://helm.dask.org/
     alias: daskhub

@@ -23,7 +23,7 @@ daskhub:
       image:
         # s3fs
         name: mwa4/base-notebook
-        tag: 15
+        tag: 21
       extraEnv:
         GSS_USE_PROXY: "yes"
         GSSPROXY_SOCKET: "/run/gssproxy/jupyter.sock"
@@ -49,7 +49,7 @@ daskhub:
           emptyDir: {}
       extraContainers:
       - name: gssproxy
-        image: mwa4/gssproxy:1.0.11
+        image: mwa4/gssproxy:1.0.12
         volumeMounts:
         - name: krb5-config
           mountPath: "/etc/krb5.conf"
@@ -74,7 +74,7 @@ daskhub:
       image:
         # boto3
         name: mwa4/k8s-hub
-        tag: 0.11.1-boto3
+        tag: 1.0.1-boto3
       # prevent timeouts on callbacks from dask gateway into jupyterhub because
       # of active network policy
       # https://github.com/dask/helm-chart/issues/142
@@ -251,7 +251,7 @@ daskhub:
         image:
           # s3fs
           name: mwa4/dask-gateway
-          tag: 6
+          tag: 8
         scheduler:
           cores:
             request: 0.1
@@ -294,7 +294,7 @@ daskhub:
               emptyDir: {}
             containers:
             - name: gssproxy
-              image: mwa4/gssproxy:1.0.11
+              image: mwa4/gssproxy:1.0.12
               volumeMounts:
               - name: krb5-config
                 mountPath: "/etc/krb5.conf"

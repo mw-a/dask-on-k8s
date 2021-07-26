@@ -1,4 +1,7 @@
 git clone https://github.com/dask/dask-gateway
+cd dask-gateway/dask-gateway
+patch -p1 < $this_file
+docker build -t mwa4/dask-gateway-dask:1 .
 
 diff --git a/dask-gateway/Dockerfile b/dask-gateway/Dockerfile
 index da94e3b..4aa1777 100644
