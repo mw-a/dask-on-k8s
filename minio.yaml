@@ -15,7 +15,9 @@ buckets:
   - name: dask
     policy: none
 persistence:
-  size: 1Gi
+  # minio requires 1Gi minimum and will refuse to start with "disk path full"
+  # with exactly 1Gi, see https://github.com/minio/minio/issues/5761
+  size: 2Gi
 resources:
   requests:
     memory: 50Mi
