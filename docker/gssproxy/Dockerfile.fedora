@@ -1,0 +1,14 @@
+# fedora has a mit krb5 1.19.1 that matches what's provided by conda currently
+FROM fedora:34
+
+LABEL maintainer="Michael Weiser <michael.weiser@atos.net>"
+
+USER root
+RUN yum install -y gssproxy && \
+	yum clean all
+
+COPY entrypoint /
+RUN chmod 755 /entrypoint
+
+ENTRYPOINT ["/entrypoint", "-i"]
+CMD ["--debug-level=1"]

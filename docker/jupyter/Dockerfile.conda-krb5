@@ -1,0 +1,48 @@
+FROM pangeo/base-notebook:2021.06.05
+
+LABEL maintainer="Michael Weiser <michael.weiser@atos.net>"
+
+USER root
+
+RUN apt-get update -y && \
+	DEBIAN_FRONTEND=noninteractive apt-get install -y \
+		gssproxy \
+		krb5-user \
+	&& apt-get clean all \
+	&& find /var/cache/apt/archives /var/lib/apt/lists -type f -delete
+
+# for debugging
+#		smbclient \
+#		vim \
+#		sudo \
+
+#RUN echo jovyan ALL=\(ALL:ALL\) NOPASSWD: ALL > /etc/sudoers.d/jovyan
+
+RUN conda install -n notebook -c conda-forge -y \
+		python-gssapi \
+		smbprotocol \
+		s3fs \
+		path \
+		asammdf \
+		holoviews \
+		prefect \
+		dask-jobqueue \
+		scipy \
+		&& \
+	conda clean -afy
+
+# conda mit-krb5 looks for config inside its environment - prepare some
+# symlinks so it picks up system-wide configuration.
+# note2self: gssproxy proxymech.so is linked against system krb5 libs - keep in
+# mind if strange crashes start to happen.
+RUN ln -sfn /etc/krb5.conf /srv/conda/envs/notebook/etc/krb5.conf && \
+	ln -sfn /etc/gss /srv/conda/envs/notebook/etc/gss
+
+# explicit gss_acquire_cred even on the default identity breaks
+# gss_init_sec_context final iteration with
+# "gssapi.raw.exceptions.InvalidCredentialsError: Major (655360): Invalid
+# credential was supplied, Minor (100004): Unknown error"
+RUN sed -i -e "/^def _get_gssapi_credential/a \\    return None" \
+	/srv/conda/envs/notebook/lib/python3.8/site-packages/spnego/gss.py
+
+USER $NB_UID

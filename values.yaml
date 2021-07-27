@@ -24,6 +24,8 @@ daskhub:
         # s3fs
         name: mwa4/base-notebook
         tag: 21
+        # alternatively with conda krb5, needs gssproxy:1.0.12-fedora below for now:
+        #tag: 20-conda-krb5
       extraEnv:
         GSS_USE_PROXY: "yes"
         GSSPROXY_SOCKET: "/run/gssproxy/jupyter.sock"
@@ -50,6 +52,7 @@ daskhub:
       extraContainers:
       - name: gssproxy
         image: mwa4/gssproxy:1.0.12
+        #image: mwa4/gssproxy:1.0.12-fedora
         volumeMounts:
         - name: krb5-config
           mountPath: "/etc/krb5.conf"
