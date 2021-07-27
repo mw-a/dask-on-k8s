@@ -1,3 +1,7 @@
 auth:
   adminUser: admin
   adminPassword: "P@ssw0rd"
+
+postgresql:
+  persistence:
+    size: 1Gi
