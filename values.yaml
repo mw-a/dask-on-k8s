@@ -66,6 +66,20 @@ daskhub:
         - name: gssproxy-keytabs
           mountPath: /secrets/keytabs
           readOnly: true
+      # stolen from https://gitlab.com/gitlab-org/gitlab-foss/-/blob/master/vendor/jupyter/values.yaml
+      lifecycleHooks:
+        postStart:
+          exec:
+            command:
+              - "sh"
+              - "-c"
+              - >
+                git config --global credential.helper store;
+
+                # keycloak user info endpoint likely needs to be interviewed for these
+                #git config --global user.email "${GITLAB_USER_EMAIL}";
+                #git config --global user.name "${GITLAB_USER_NAME}";
+
     hub:
       config:
         Authenticator:
@@ -90,27 +104,155 @@ daskhub:
         OAUTH_CALLBACK_URL: "http://192.168.122.90/hub/oauth_callback"
         OAUTH2_AUTHORIZE_URL: "http://192.168.122.91/auth/realms/example.org/protocol/openid-connect/auth"
         OAUTH2_TOKEN_URL: "http://192.168.122.91/auth/realms/example.org/protocol/openid-connect/token"
+        # adjust! openssl rand -hex 32
+        JUPYTERHUB_CRYPT_KEY: "114903f5d652fe7e3cc3fe51e3e60f4899a6ddc18b891cfbed68e294f40085cf"
       extraConfig:
         oauth2.py: |
+          from tornado.auth import OAuth2Mixin
+          from tornado.httputil import url_concat
+          from tornado.httpclient import HTTPRequest
+          from jupyterhub.handlers import BaseHandler
+          from jupyterhub.utils import url_path_join
           from oauthenticator.generic import GenericOAuthenticator
+          from oauthenticator.oauth2 import OAuthCallbackHandler, \
+              _serialize_state, _deserialize_state
           from kubernetes.client.models import V1Secret, V1ObjectMeta
           from kubernetes.client.rest import ApiException
           from kubernetes.client import V1DeleteOptions
           import boto3
           import base64
+          import uuid
+          import secrets
+          import hashlib
 
-          def post_auth_hook(authenticator, handler, authentication):
-            authenticator.access_token = authentication['auth_state']['access_token']
-            return authentication
+          # enable persisting auth state for refresh of tokens and transporting service tokens
+          c.Authenticator.enable_auth_state = True
 
-          c.Authenticator.post_auth_hook = post_auth_hook
+          # jupyter hub auth flow:
+          # /oauth_login -> IDP -> /oauth_callback -> /hub -> /hub/spawn -> ...
+          #
+          # we add:
+          # /oauth_login -> IDP -> /oauth_callback -> /gitlab_creds -> Gitlab Service (+ potentially another IDP) -> /gitlab_creds_callback -> /hub -> /hub/spawn -> ...
+
+          class ChainingOauthCallbackHandler(OAuthCallbackHandler):
+              def get_next_url(self, user=None):
+                  """ Redirect to a different URI to acquire additional creds for the user """
+                  # put original authenticator next url into new state to
+                  # preserve it across additional roundtrips to different
+                  # services
+                  state = dict(
+                      state_id=uuid.uuid4().hex,
+                      next_url=super().get_next_url(user),
+                  )
+                  params = dict(state=_serialize_state(state))
+                  return url_concat('/gitlab_creds', params)
+
+          gitlab_host = "gitlab.example.org"
+          gitlab_base_uri = "https://%s" % gitlab_host
+          gitlab_authorize_url = "%s/oauth/authorize" % gitlab_base_uri
+          gitlab_token_uri = "%s/oauth/token" % gitlab_base_uri
+          gitlab_client_id = "7c64d5c2025a449619ccf262ac0af2642b074021c4097e270423b731858f9acd"
+          gitlab_client_secret = "f9d43f080ec0c44e61e332bc7b8fd377178090f251fe5b44480532e56b65e583"
+          gitlab_redirect_path = "gitlab_creds_callback"
+
+          class GitlabCredsHandler(OAuth2Mixin, BaseHandler):
+              _OAUTH_AUTHORIZE_URL = gitlab_authorize_url
+
+              async def get(self):
+                  redirect_uri= "%s://%s%s" % (self.request.protocol, self.request.host,
+                     url_path_join(self.hub.server.base_url, gitlab_redirect_path))
+
+                  # PKCE bits stolen from https://github.com/RomeoDespres/pkce/blob/master/pkce/__init__.py
+                  code_verifier = secrets.token_urlsafe(96)
+                  hashed = hashlib.sha256(code_verifier.encode('ascii')).digest()
+                  encoded = base64.urlsafe_b64encode(hashed)
+                  code_challenge = encoded.decode('ascii')[:-1]
+
+                  # use auth state to transport code verifier to callback handler
+                  auth_state = await self.current_user.get_auth_state()
+                  auth_state['gitlab_code_verifier'] = code_verifier
+                  await self.current_user.save_auth_state(auth_state)
+
+                  # do not leak extra params intended for our IDP
+                  #extra_params = self.authenticator.extra_authorize_params.copy()
+                  self.log.info('Gitlab OAuth redirect: %r', redirect_uri)
+                  # but do copy state to propagate it to final redirect
+                  state = self.get_argument('state')
+                  extra_params = dict(
+                      state=state,
+                      code_challenge=code_challenge,
+                      code_challenge_method='S256',
+                  )
+                  self.authorize_redirect(
+                      redirect_uri=redirect_uri,
+                      client_id=gitlab_client_id,
+                      scope=['read_repository', 'write_repository', 'api'],
+                      extra_params=extra_params,
+                      response_type='code',
+                  )
+
+          class GitlabCredsCallbackHandler(BaseHandler):
+              async def get(self):
+                  # stolen from GitlabOAuthenticator but without authentication part
+                  code = self.get_argument("code")
+                  redirect_uri= "%s://%s%s" % (self.request.protocol, self.request.host,
+                     url_path_join(self.hub.server.base_url, gitlab_redirect_path))
+
+                  auth_state = await self.current_user.get_auth_state()
+                  code_verifier = auth_state['gitlab_code_verifier']
+
+                  params = dict(
+                      client_id=gitlab_client_id,
+                      client_secret=gitlab_client_secret,
+                      code=code,
+                      code_verifier=code_verifier,
+                      grant_type="authorization_code",
+                      redirect_uri=redirect_uri,
+                  )
+
+                  url = url_concat(gitlab_token_uri, params)
+
+                  req = HTTPRequest(
+                      url,
+                      method="POST",
+                      headers={"Accept": "application/json"},
+                      validate_cert=True,
+                      body='',  # Body is required for a POST...
+                  )
+
+                  resp_json = await self.authenticator.fetch(req, label="getting access token")
+                  access_token = resp_json['access_token']
+                  refresh_token = resp_json['refresh_token']
+                  #self.log.info('Gitlab OAuth response: %r', resp_json)
+
+                  # remember access and refresh tokens in auth state
+                  auth_state = await self.current_user.get_auth_state()
+                  auth_state['gitlab_access_token'] = resp_json['access_token']
+                  auth_state['gitlab_refresh_token'] = resp_json['refresh_token']
+                  await self.current_user.save_auth_state(auth_state)
+
+                  state = self.get_argument('state')
+                  next_url = _deserialize_state(state).get('next_url')
+                  if not next_url:
+                      next_url = url_path_join(self.hub.server.base_url, 'home')
+                  self.redirect(next_url)
 
           class KubeGenericOAuthenticator(GenericOAuthenticator):
-              def __init__(self, **kwargs):
-                  super().__init__(**kwargs)
-                  self.access_token = None
+              callback_handler = ChainingOauthCallbackHandler
+
+              def get_handlers(self, app):
+                  handlers = super().get_handlers(app)
+                  handlers.extend((
+                    (r'/gitlab_creds', GitlabCredsHandler),
+                    (r'/gitlab_creds_callback', GitlabCredsCallbackHandler),
+                  ))
+                  return handlers
 
               async def pre_spawn_start(self, user, spawner):
+                  self.log.info('Pre spawn start : %s', user.name)
+                  auth_state = await user.get_auth_state()
+                  access_token = auth_state['access_token']
+
                   sts_client = boto3.client(
                       'sts',
                       region_name='us-east-1',
@@ -121,7 +263,7 @@ daskhub:
                   response = sts_client.assume_role_with_web_identity(
                       RoleArn='arn:aws:iam::123456789012:user/svc-internal-api',
                       RoleSessionName='test',
-                      WebIdentityToken=self.access_token,
+                      WebIdentityToken=access_token,
                       DurationSeconds=3600
                   )
 
@@ -180,11 +322,64 @@ daskhub:
                           }
                       })
 
+                  if auth_state['gitlab_access_token']:
+                      secret_name = "jupyter-git-secrets-%s" % user.escaped_name
+
+                      secret = V1Secret()
+                      secret.kind = "Secret"
+                      secret.api_version = "v1"
+                      secret.metadata = V1ObjectMeta()
+                      secret.metadata.name = secret_name
+                      #secret.metadata.annotations = (annotations or {}).copy()
+                      #secret.metadata.labels = (labels or {}).copy()
+                      #secret.metadata.owner_references = owner_references
+
+                      secret.data = {}
+                      gitlab_url = "https://oauth2:%s@%s" % (auth_state['gitlab_access_token'], gitlab_host)
+                      secret.data['git-credentials'] = base64.encodebytes(gitlab_url.encode('ascii')).decode('ascii')
+
+                      try:
+                          await spawner.asynchronize(
+                              spawner.api.delete_namespaced_secret,
+                              name=secret_name,
+                              namespace=spawner.namespace,
+                              body=V1DeleteOptions())
+                      except ApiException as e:
+                          if e.status != 404:
+                              raise
+
+                      await spawner.asynchronize(
+                          spawner.api.create_namespaced_secret,
+                          spawner.namespace,
+                          secret)
+
+                      spawner.volumes.append({
+                          'name': 'git-credentials',
+                          'secret': {
+                              'secretName': secret_name,
+                          }})
+
+                      spawner.volume_mounts.append({
+                          'name': 'git-credentials',
+                          'mountPath': '/home/jovyan/.git-credentials',
+                          'subPath': 'git-credentials',
+                          })
+
               async def post_spawn_stop(self, user, spawner):
                   try:
                       await spawner.asynchronize(
                           spawner.api.delete_namespaced_secret,
                           name="jupyter-secrets-%s" % user.escaped_name,
+                          namespace=spawner.namespace,
+                          body=V1DeleteOptions())
+                  except ApiException as e:
+                      if e.status != 404:
+                          raise
+
+                  try:
+                      await spawner.asynchronize(
+                          spawner.api.delete_namespaced_secret,
+                          name="jupyter-git-secrets-%s" % user.escaped_name,
                           namespace=spawner.namespace,
                           body=V1DeleteOptions())
                   except ApiException as e:
