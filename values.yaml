@@ -79,10 +79,8 @@ daskhub:
               - >
                 git config --global credential.helper store;
                 [ -L /home/jovyan/.config/jupyter/git-credentials/git-credentials ] && ln -sfn /home/jovyan/.config/jupyter/git-credentials/git-credentials /home/jovyan/.git-credentials;
-
-                # keycloak user info endpoint likely needs to be interviewed for these
-                #git config --global user.email "${GITLAB_USER_EMAIL}";
-                #git config --global user.name "${GITLAB_USER_NAME}";
+                [ -z "${USER_EMAIL}" ] || git config --global user.email "${USER_EMAIL}";
+                [ -z "${USER_REAL_NAME}" ] || git config --global user.name "${USER_REAL_NAME}";
 
     hub:
       config:
@@ -327,6 +325,14 @@ daskhub:
                   self.log.info('Pre spawn start : %s', user.name)
                   auth_state = await user.get_auth_state()
                   access_token = auth_state['access_token']
+
+                  real_name = auth_state.get('oauth_user', {}).get('name')
+                  if real_name:
+                      spawner.environment['USER_REAL_NAME'] = real_name
+
+                  email = auth_state.get('oauth_user', {}).get('email')
+                  if email:
+                      spawner.environment['USER_EMAIL'] = email
 
                   sts_client = boto3.client(
                       'sts',
