@@ -93,7 +93,6 @@ daskhub:
       extraConfig:
         oauth2.py: |
           from oauthenticator.generic import GenericOAuthenticator
-          from tornado import gen
           from kubernetes.client.models import V1Secret, V1ObjectMeta
           from kubernetes.client.rest import ApiException
           from kubernetes.client import V1DeleteOptions
@@ -111,8 +110,7 @@ daskhub:
                   super().__init__(**kwargs)
                   self.access_token = None
 
-              @gen.coroutine
-              def pre_spawn_start(self, user, spawner):
+              async def pre_spawn_start(self, user, spawner):
                   sts_client = boto3.client(
                       'sts',
                       region_name='us-east-1',
@@ -131,23 +129,18 @@ daskhub:
                   secret_key = response['Credentials']['SecretAccessKey']
                   session_token = response['Credentials']['SessionToken']
 
-                  # add to notebook environment directly
-                  spawner.environment['AWS_ACCESS_KEY_ID'] = access_key
-                  spawner.environment['AWS_SECRET_ACCESS_KEY'] = secret_key
-                  spawner.environment['AWS_SESSION_TOKEN'] = session_token
-
                   for c in spawner.extra_containers:
-                    if c['name'] != "gssproxy":
-                      continue
+                      if c['name'] != "gssproxy":
+                          continue
 
-                    if 'env' not in c:
-                      c['env'] = []
+                      if 'env' not in c:
+                          c['env'] = []
 
-                    c['env'].append({
-                      'name': 'GSSPROXY_CREATE_USERS',
-                      'value': '%s=1000' % user.escaped_name})
+                      c['env'].append({
+                          'name': 'GSSPROXY_CREATE_USERS',
+                          'value': '%s=1000' % user.escaped_name})
 
-                  secret_name = "dask-secrets-%s" % user.escaped_name
+                  secret_name = "jupyter-secrets-%s" % user.escaped_name
 
                   secret = V1Secret()
                   secret.kind = "Secret"
@@ -159,13 +152,12 @@ daskhub:
                   #secret.metadata.owner_references = owner_references
 
                   secret.data = {}
-                  secret.data['keycloak-access-token'] = base64.encodebytes(self.access_token.encode('ascii')).decode('ascii')
-                  secret.data['s3a-access-key'] = base64.encodebytes(access_key.encode('ascii')).decode('ascii')
-                  secret.data['s3a-secret-key'] = base64.encodebytes(secret_key.encode('ascii')).decode('ascii')
-                  secret.data['s3a-session-token'] = base64.encodebytes(session_token.encode('ascii')).decode('ascii')
+                  secret.data['AWS_ACCESS_KEY_ID'] = base64.encodebytes(access_key.encode('ascii')).decode('ascii')
+                  secret.data['AWS_SECRET_ACCESS_KEY'] = base64.encodebytes(secret_key.encode('ascii')).decode('ascii')
+                  secret.data['AWS_SESSION_TOKEN'] = base64.encodebytes(session_token.encode('ascii')).decode('ascii')
 
                   try:
-                      yield spawner.asynchronize(
+                      await spawner.asynchronize(
                           spawner.api.delete_namespaced_secret,
                           name=secret_name,
                           namespace=spawner.namespace,
@@ -174,10 +166,30 @@ daskhub:
                       if e.status != 404:
                           raise
 
-                  yield spawner.asynchronize(
+                  await spawner.asynchronize(
                       spawner.api.create_namespaced_secret,
                       spawner.namespace,
                       secret)
+
+                  if 'envFrom' not in spawner.extra_container_config:
+                      spawner.extra_container_config['envFrom'] = []
+
+                  spawner.extra_container_config['envFrom'].append({
+                          'secretRef': {
+                              'name': secret_name,
+                          }
+                      })
+
+              async def post_spawn_stop(self, user, spawner):
+                  try:
+                      await spawner.asynchronize(
+                          spawner.api.delete_namespaced_secret,
+                          name="jupyter-secrets-%s" % user.escaped_name,
+                          namespace=spawner.namespace,
+                          body=V1DeleteOptions())
+                  except ApiException as e:
+                      if e.status != 404:
+                          raise
 
           c.JupyterHub.authenticator_class = KubeGenericOAuthenticator
 
@@ -205,35 +217,14 @@ daskhub:
           from dask_gateway_server.options import Options
 
           def options_handler(options, user):
-              secret_name = "dask-secrets-%s" % user.name
+              if 'envFrom' not in c.KubeClusterConfig.worker_extra_container_config:
+                  c.KubeClusterConfig.worker_extra_container_config['envFrom'] = []
 
-              c.KubeClusterConfig.worker_extra_container_config['env'].extend(
-                  [{
-                    'name': 'AWS_ACCESS_KEY_ID',
-                    'valueFrom': {
-                       'secretKeyRef': {
-                         'name': secret_name,
-                         'key': 's3a-access-key',
-                       }
-                    }
-                  },{
-                    'name': 'AWS_SECRET_ACCESS_KEY',
-                    'valueFrom': {
-                       'secretKeyRef': {
-                         'name': secret_name,
-                         'key': 's3a-secret-key',
-                       }
-                    }
-                  },{
-                    'name': 'AWS_SESSION_TOKEN',
-                    'valueFrom': {
-                       'secretKeyRef': {
-                         'name': secret_name,
-                         'key': 's3a-session-token',
-                       }
-                    }
-                  }
-              ])
+              c.KubeClusterConfig.worker_extra_container_config['envFrom'].append({
+                      'secretRef': {
+                          'name': "jupyter-secrets-%s" % user.name,
+                      }
+                  })
 
               for cont in c.KubeClusterConfig.worker_extra_pod_config['containers']:
                 if cont['name'] != "gssproxy":
