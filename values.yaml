@@ -73,8 +73,12 @@ daskhub:
             command:
               - "sh"
               - "-c"
+              # the git credentials secret must be mounted without subPath to
+              # get atomic updates. Therefore we need to point to the right
+              # subPath using a symlink ourselves.
               - >
                 git config --global credential.helper store;
+                [ -L /home/jovyan/.config/jupyter/git-credentials/git-credentials ] && ln -sfn /home/jovyan/.config/jupyter/git-credentials/git-credentials /home/jovyan/.git-credentials;
 
                 # keycloak user info endpoint likely needs to be interviewed for these
                 #git config --global user.email "${GITLAB_USER_EMAIL}";
@@ -127,6 +131,10 @@ daskhub:
 
           # enable persisting auth state for refresh of tokens and transporting service tokens
           c.Authenticator.enable_auth_state = True
+          c.Authenticator.refresh_pre_spawn = True
+          # very aggressive refresh setting for testing, updates are only
+          # done on non-api requests, though
+          c.Authenticator.auth_refresh_age = 30
 
           # jupyter hub auth flow:
           # /oauth_login -> IDP -> /oauth_callback -> /hub -> /hub/spawn -> ...
@@ -199,7 +207,7 @@ daskhub:
                      url_path_join(self.hub.server.base_url, gitlab_redirect_path))
 
                   auth_state = await self.current_user.get_auth_state()
-                  code_verifier = auth_state['gitlab_code_verifier']
+                  code_verifier = auth_state.get('gitlab_code_verifier')
 
                   params = dict(
                       client_id=gitlab_client_id,
@@ -223,12 +231,11 @@ daskhub:
                   resp_json = await self.authenticator.fetch(req, label="getting access token")
                   access_token = resp_json['access_token']
                   refresh_token = resp_json['refresh_token']
-                  #self.log.info('Gitlab OAuth response: %r', resp_json)
 
                   # remember access and refresh tokens in auth state
                   auth_state = await self.current_user.get_auth_state()
-                  auth_state['gitlab_access_token'] = resp_json['access_token']
-                  auth_state['gitlab_refresh_token'] = resp_json['refresh_token']
+                  auth_state['gitlab_access_token'] = resp_json.get('access_token')
+                  auth_state['gitlab_refresh_token'] = resp_json.get('refresh_token')
                   await self.current_user.save_auth_state(auth_state)
 
                   state = self.get_argument('state')
@@ -247,6 +254,74 @@ daskhub:
                     (r'/gitlab_creds_callback', GitlabCredsCallbackHandler),
                   ))
                   return handlers
+
+              async def refresh_user(self, user, handler=None):
+                  self.log.info('refresh user: %s', user.name)
+                  auth_state = await user.get_auth_state()
+                  gitlab_access_token = auth_state.get('gitlab_access_token')
+                  gitlab_refresh_token = auth_state.get('gitlab_refresh_token')
+                  if gitlab_access_token and gitlab_refresh_token:
+                      params = dict(
+                          grant_type="refresh_token",
+                          refresh_token=gitlab_refresh_token,
+                          client_id=gitlab_client_id,
+                          client_secret=gitlab_client_secret,
+                      )
+
+                      url = url_concat(gitlab_token_uri, params)
+
+                      req = HTTPRequest(
+                          url,
+                          method="POST",
+                          headers={"Accept": "application/json"},
+                          validate_cert=True,
+                          body='',  # Body is required for a POST...
+                      )
+
+                      resp_json = await self.fetch(req, label="getting refreshed access token")
+                      auth_state['gitlab_access_token'] = resp_json.get('access_token')
+                      # gitlab uses doorkeeper and doorkeeper does refresh
+                      # token rotation by default. So we get a new refresh
+                      # token with each access token, invalidating the old
+                      # refresh token. Nice!
+                      auth_state['gitlab_refresh_token'] = resp_json.get('refresh_token')
+
+                  # update the secret
+                  secret_name = "jupyter-git-secrets-%s" % user.escaped_name
+                  gitlab_access_token = auth_state.get('gitlab_access_token')
+                  gitlab_url = "https://oauth2:%s@%s" % (gitlab_access_token, gitlab_host)
+                  git_credentials = "%s\n" % gitlab_url
+
+                  secret = V1Secret()
+                  secret.kind = "Secret"
+                  secret.api_version = "v1"
+                  secret.metadata = V1ObjectMeta()
+                  secret.metadata.name = secret_name
+                  secret.data = {
+                      'git-credentials': base64.encodebytes(git_credentials.encode('ascii')).decode('ascii'),
+                  }
+
+                  for server_name in user.spawners:
+                      spawner = user.spawners[server_name]
+                      try:
+                          await spawner.asynchronize(
+                              spawner.api.replace_namespaced_secret,
+                              secret_name,
+                              spawner.namespace,
+                              secret)
+                      except ApiException as e:
+                          if e.status != 404:
+                              raise
+
+                          await spawner.asynchronize(
+                              spawner.api.create_namespaced_secret,
+                              spawner.namespace,
+                              secret)
+
+                      # we only have one secret for all notebooks for now
+                      break
+
+                  return {'auth_state': auth_state}
 
               async def pre_spawn_start(self, user, spawner):
                   self.log.info('Pre spawn start : %s', user.name)
@@ -322,36 +397,11 @@ daskhub:
                           }
                       })
 
-                  if auth_state['gitlab_access_token']:
+                  gitlab_access_token = auth_state.get('gitlab_access_token')
+                  if gitlab_access_token:
                       secret_name = "jupyter-git-secrets-%s" % user.escaped_name
 
-                      secret = V1Secret()
-                      secret.kind = "Secret"
-                      secret.api_version = "v1"
-                      secret.metadata = V1ObjectMeta()
-                      secret.metadata.name = secret_name
-                      #secret.metadata.annotations = (annotations or {}).copy()
-                      #secret.metadata.labels = (labels or {}).copy()
-                      #secret.metadata.owner_references = owner_references
-
-                      secret.data = {}
-                      gitlab_url = "https://oauth2:%s@%s" % (auth_state['gitlab_access_token'], gitlab_host)
-                      secret.data['git-credentials'] = base64.encodebytes(gitlab_url.encode('ascii')).decode('ascii')
-
-                      try:
-                          await spawner.asynchronize(
-                              spawner.api.delete_namespaced_secret,
-                              name=secret_name,
-                              namespace=spawner.namespace,
-                              body=V1DeleteOptions())
-                      except ApiException as e:
-                          if e.status != 404:
-                              raise
-
-                      await spawner.asynchronize(
-                          spawner.api.create_namespaced_secret,
-                          spawner.namespace,
-                          secret)
+                      # secret is created in refresh_user() before spawn as well
 
                       spawner.volumes.append({
                           'name': 'git-credentials',
@@ -361,8 +411,7 @@ daskhub:
 
                       spawner.volume_mounts.append({
                           'name': 'git-credentials',
-                          'mountPath': '/home/jovyan/.git-credentials',
-                          'subPath': 'git-credentials',
+                          'mountPath': '/home/jovyan/.config/jupyter/git-credentials',
                           })
 
               async def post_spawn_stop(self, user, spawner):
