@@ -138,7 +138,10 @@ daskhub:
           # /oauth_login -> IDP -> /oauth_callback -> /hub -> /hub/spawn -> ...
           #
           # we add:
-          # /oauth_login -> IDP -> /oauth_callback -> /gitlab_creds -> Gitlab Service (+ potentially another IDP) -> /gitlab_creds_callback -> /hub -> /hub/spawn -> ...
+          # /oauth_login -> IDP -> /oauth_callback
+          # -> /gitlab_creds -> Gitlab Service (+ potentially another IDP) -> /gitlab_creds_callback
+          # [-> /github_creds -> Github Service (+ potentially another IDP) -> /github_creds_callback
+          # -> /hub -> /hub/spawn -> ...
 
           class ChainingOauthCallbackHandler(OAuthCallbackHandler):
               def get_next_url(self, user=None):
@@ -151,8 +154,8 @@ daskhub:
                       next_url=super().get_next_url(user),
                   )
                   params = dict(state=_serialize_state(state))
-                  #return url_concat('/gitlab_creds', params)
-                  return url_concat('/github_creds', params)
+                  return url_concat('/gitlab_creds', params)
+                  #return url_concat('/github_creds', params)
 
           gitlab_host = "gitlab.example.org"
           gitlab_base_uri = "https://%s" % gitlab_host
@@ -236,9 +239,17 @@ daskhub:
                   await self.current_user.save_auth_state(auth_state)
 
                   state = self.get_argument('state')
-                  next_url = _deserialize_state(state).get('next_url')
-                  if not next_url:
-                      next_url = url_path_join(self.hub.server.base_url, 'home')
+
+                  # drop user into notebook with url retrieved from state
+                  #next_url = _deserialize_state(state).get('next_url')
+                  #if not next_url:
+                  #    next_url = url_path_join(self.hub.server.base_url, 'home')
+
+                  # or chain in the next external resource provider credential
+                  # retrieval, propagating state
+                  params = dict(state=state)
+                  next_url = url_concat('/github_creds', params)
+
                   self.redirect(next_url)
 
           github_host = "github.com"
