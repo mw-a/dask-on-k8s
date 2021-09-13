@@ -151,7 +151,8 @@ daskhub:
                       next_url=super().get_next_url(user),
                   )
                   params = dict(state=_serialize_state(state))
-                  return url_concat('/gitlab_creds', params)
+                  #return url_concat('/gitlab_creds', params)
+                  return url_concat('/github_creds', params)
 
           gitlab_host = "gitlab.example.org"
           gitlab_base_uri = "https://%s" % gitlab_host
@@ -227,13 +228,113 @@ daskhub:
                   )
 
                   resp_json = await self.authenticator.fetch(req, label="getting access token")
-                  access_token = resp_json['access_token']
-                  refresh_token = resp_json['refresh_token']
 
                   # remember access and refresh tokens in auth state
                   auth_state = await self.current_user.get_auth_state()
                   auth_state['gitlab_access_token'] = resp_json.get('access_token')
                   auth_state['gitlab_refresh_token'] = resp_json.get('refresh_token')
+                  await self.current_user.save_auth_state(auth_state)
+
+                  state = self.get_argument('state')
+                  next_url = _deserialize_state(state).get('next_url')
+                  if not next_url:
+                      next_url = url_path_join(self.hub.server.base_url, 'home')
+                  self.redirect(next_url)
+
+          github_host = "github.com"
+          github_base_uri = "https://%s" % github_host
+          github_authorize_url = "%s/login/oauth/authorize" % github_base_uri
+          github_token_uri = "%s/login/oauth/access_token" % github_base_uri
+          # differences between Github and OAuth apps for our use-case:
+          # - only Github apps support PKCE
+          # - only Github apps receive refresh tokens, access tokens for OAuth
+          #   apps remain valid until explicitly revoked sideband!
+          # - HTTPS URL for cloning is different: Github apps use username
+          #   x-access-token and the access token as password while OAuth apps
+          #   use the token as username.
+          # - Github apps must use an installation access token for git clone
+          # - conclusion: Github apps have the more desireable and complete
+          #   featureset OAuth2-wise but also restrictions tailored towards
+          #   custom apps rather than developer access.
+          github_client_id = "<id>"
+          github_client_secret = "<secret>"
+          #github_client_id = "<id>"
+          #github_client_secret = "<secret>"
+          github_redirect_path = "github_creds_callback"
+
+          class GithubCredsHandler(OAuth2Mixin, BaseHandler):
+              _OAUTH_AUTHORIZE_URL = github_authorize_url
+
+              async def get(self):
+                  redirect_uri= "%s://%s%s" % (self.request.protocol, self.request.host,
+                     url_path_join(self.hub.server.base_url, github_redirect_path))
+
+                  # PKCE is not supported for OAuth2 apps, only Github Apps as of now
+
+                  # PKCE bits stolen from https://github.com/RomeoDespres/pkce/blob/master/pkce/__init__.py
+                  #code_verifier = secrets.token_urlsafe(96)
+                  #hashed = hashlib.sha256(code_verifier.encode('ascii')).digest()
+                  #encoded = base64.urlsafe_b64encode(hashed)
+                  #code_challenge = encoded.decode('ascii')[:-1]
+
+                  # use auth state to transport code verifier to callback handler
+                  #auth_state = await self.current_user.get_auth_state()
+                  #auth_state['github_code_verifier'] = code_verifier
+                  #await self.current_user.save_auth_state(auth_state)
+
+                  # do not leak extra params intended for our IDP
+                  #extra_params = self.authenticator.extra_authorize_params.copy()
+                  self.log.info('Gitlab OAuth redirect: %r', redirect_uri)
+                  # but do copy state to propagate it to final redirect
+                  state = self.get_argument('state')
+                  extra_params = dict(
+                      state=state,
+                      #code_challenge=code_challenge,
+                      #code_challenge_method='S256',
+                  )
+                  self.authorize_redirect(
+                      redirect_uri=redirect_uri,
+                      client_id=github_client_id,
+                      scope=['repo'],
+                      extra_params=extra_params,
+                      response_type='code',
+                  )
+
+          class GithubCredsCallbackHandler(BaseHandler):
+              async def get(self):
+                  # stolen from GitHubOAuthenticator but without authentication part
+                  code = self.get_argument("code")
+                  redirect_uri= "%s://%s%s" % (self.request.protocol, self.request.host,
+                     url_path_join(self.hub.server.base_url, github_redirect_path))
+
+                  #auth_state = await self.current_user.get_auth_state()
+                  #code_verifier = auth_state.get('github_code_verifier')
+
+                  params = dict(
+                      client_id=github_client_id,
+                      client_secret=github_client_secret,
+                      code=code,
+                      #code_verifier=code_verifier,
+                      grant_type="authorization_code",
+                      redirect_uri=redirect_uri,
+                  )
+
+                  url = url_concat(github_token_uri, params)
+
+                  req = HTTPRequest(
+                      url,
+                      method="POST",
+                      headers={"Accept": "application/json"},
+                      validate_cert=True,
+                      body='',  # Body is required for a POST...
+                  )
+
+                  resp_json = await self.authenticator.fetch(req, label="getting access token")
+
+                  # remember access and refresh tokens in auth state
+                  auth_state = await self.current_user.get_auth_state()
+                  auth_state['github_access_token'] = resp_json.get('access_token')
+                  #auth_state['github_refresh_token'] = resp_json.get('refresh_token')
                   await self.current_user.save_auth_state(auth_state)
 
                   state = self.get_argument('state')
@@ -250,6 +351,8 @@ daskhub:
                   handlers.extend((
                     (r'/gitlab_creds', GitlabCredsHandler),
                     (r'/gitlab_creds_callback', GitlabCredsCallbackHandler),
+                    (r'/github_creds', GithubCredsHandler),
+                    (r'/github_creds_callback', GithubCredsCallbackHandler),
                   ))
                   return handlers
 
@@ -284,11 +387,47 @@ daskhub:
                       # refresh token. Nice!
                       auth_state['gitlab_refresh_token'] = resp_json.get('refresh_token')
 
+                  github_access_token = auth_state.get('github_access_token')
+                  github_refresh_token = auth_state.get('github_refresh_token')
+                  if github_access_token and github_refresh_token:
+                      params = dict(
+                          grant_type="refresh_token",
+                          refresh_token=github_refresh_token,
+                          client_id=github_client_id,
+                          client_secret=github_client_secret,
+                      )
+
+                      url = url_concat(github_token_uri, params)
+
+                      req = HTTPRequest(
+                          url,
+                          method="POST",
+                          headers={"Accept": "application/json"},
+                          validate_cert=True,
+                          body='',  # Body is required for a POST...
+                      )
+
+                      resp_json = await self.fetch(req, label="getting refreshed access token")
+                      self.log.info("bar: %s", resp_json)
+                      auth_state['github_access_token'] = resp_json.get('access_token')
+                      auth_state['github_refresh_token'] = resp_json.get('refresh_token')
+
                   # update the secret
                   secret_name = "jupyter-git-secrets-%s" % user.escaped_name
+
+                  git_credentials = ""
                   gitlab_access_token = auth_state.get('gitlab_access_token')
-                  gitlab_url = "https://oauth2:%s@%s" % (gitlab_access_token, gitlab_host)
-                  git_credentials = "%s\n" % gitlab_url
+                  if gitlab_access_token:
+                      gitlab_url = "https://oauth2:%s@%s" % (gitlab_access_token, gitlab_host)
+                      git_credentials += "%s\n" % gitlab_url
+
+                  github_access_token = auth_state.get('github_access_token')
+                  if github_access_token:
+                      # OAuth App
+                      github_url = "https://%s:x-oauth-basic@%s" % (github_access_token, github_host)
+                      # Github App
+                      #github_url = "https://x-access-token:%s@%s" % (github_access_token, github_host)
+                      git_credentials += "%s\n" % github_url
 
                   secret = V1Secret()
                   secret.kind = "Secret"
@@ -404,7 +543,8 @@ daskhub:
                       })
 
                   gitlab_access_token = auth_state.get('gitlab_access_token')
-                  if gitlab_access_token:
+                  github_access_token = auth_state.get('github_access_token')
+                  if gitlab_access_token or github_access_token:
                       secret_name = "jupyter-git-secrets-%s" % user.escaped_name
 
                       # secret is created in refresh_user() before spawn as well
