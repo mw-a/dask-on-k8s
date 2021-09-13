@@ -1,0 +1,4 @@
+---
+ingressClass: dask-nginx
+publishService:
+  enabled: true

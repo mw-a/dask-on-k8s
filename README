@@ -1,5 +1,12 @@
 Steps to create environment:
 
+- optionally add nginx ingress controller for gitlab and keycloak (because
+  gitlab insists on TLS connections)
+
+helm upgrade --install nginx-ingress-controller bitnami/nginx-ingress-controller --values=nginx-ingress.yaml
+
+- install keycloak
+
 helm upgrade --install keycloak bitnami/keycloak --values=keycloak.yaml
 
 - add minio public client to keycloak
@@ -8,6 +15,15 @@ helm upgrade --install keycloak bitnami/keycloak --values=keycloak.yaml
 - adjust MINIO_IDENTITY_OPENID_CONFIG_URL minio.yaml to keycloak endpoint
 
 helm upgrade --install minio minio/minio --values=minio.yaml
+
+- add gitlab
+
+helm upgrade --install gitlab gitlab/gitlab --values=gitlab.yaml
+
+- create a confidential gitlab client in keycloak and create a k8s secret
+  containing the client secret for gitlab to use
+
+kubectl create secret generic gitlab-keycloak-oidc --from-file=provider=gitlab-keycloak-oidc-secret.yaml
 
 - add confidential jupyter client to keycloak
 - adjust dask.yaml with actual endpoints and client secret of jupyter, keycloak and minio. here:

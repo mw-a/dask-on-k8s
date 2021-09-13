@@ -1,0 +1,93 @@
+---
+certmanager:
+  install: false
+
+global:
+  hosts:
+    domain: example.org
+  ingress:
+    configureCertmanager: false
+    annotations:
+      "kubernetes.io/tls-acme": true
+      "cert-manager.io/cluster-issuer": "letsencrypt"
+  appConfig:
+    omniauth:
+      enabled: true
+      allowSingleSignOn: true
+      blockAutoCreatedUsers: false
+      providers:
+      - secret: gitlab-keycloak-oidc
+
+gitlab:
+  webservice:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 0.5G
+    minReplicas: 1
+    ingress:
+      tls:
+        secretName: gitlab-gitlab-tls
+    extraVolumes: |
+      - name: initializers
+        secret:
+          secretName: gitlab-initializers
+    extraVolumeMounts: |
+      - name: initializers
+        mountPath: /srv/gitlab/config/initializers/doorkeeper.rb
+        subPath: doorkeeper
+        readOnly: true
+  gitaly:
+    persistence:
+      size: 2Gi
+    extraVolumes: |
+      - name: initializers
+        secret:
+          secretName: gitlab-initializers
+    extraVolumeMounts: |
+      - name: initializers
+        mountPath: /srv/gitlab/config/initializers/doorkeeper.rb
+        subPath: doorkeeper
+        readOnly: true
+  sidekiq:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 0.5G
+    extraVolumes: |
+      - name: initializers
+        secret:
+          secretName: gitlab-initializers
+    extraVolumeMounts: |
+      - name: initializers
+        mountPath: /srv/gitlab/config/initializers/doorkeeper.rb
+        subPath: doorkeeper
+        readOnly: true
+
+postgresql:
+  persistence:
+    size: 1Gi
+
+redis:
+  persistence:
+    size: 1Gi
+
+registry:
+  ingress:
+    tls:
+      secretName: gitlab-registry-tls
+
+minio:
+  ingress:
+    tls:
+      secretName: gitlab-minio-tls
+  persistence:
+    # minio requires 1Gi minimum and will refuse to start with "disk path full"
+    # with exactly 1Gi, see https://github.com/minio/minio/issues/5761
+    size: 2Gi
+
+prometheus:
+  install: false
+
+gitlab-runner:
+  install: false

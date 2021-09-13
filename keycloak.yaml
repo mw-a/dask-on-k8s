@@ -5,3 +5,15 @@ auth:
 postgresql:
   persistence:
     size: 1Gi
+
+ingress:
+  enabled: true
+  hostname: keycloak.example.org
+  tls: true
+  certManager: true
+  ingressClassName: dask-nginx
+  annotations:
+    "cert-manager.io/cluster-issuer": "letsencrypt"
+    "kubernetes.io/ingress.class": "dask-nginx"
+
+proxyAddressForwarding: true
