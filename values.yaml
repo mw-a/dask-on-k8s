@@ -295,7 +295,7 @@ daskhub:
 
                   # do not leak extra params intended for our IDP
                   #extra_params = self.authenticator.extra_authorize_params.copy()
-                  self.log.info('Gitlab OAuth redirect: %r', redirect_uri)
+                  self.log.info('Github OAuth redirect: %r', redirect_uri)
                   # but do copy state to propagate it to final redirect
                   state = self.get_argument('state')
                   extra_params = dict(
@@ -419,21 +419,28 @@ daskhub:
                       )
 
                       resp_json = await self.fetch(req, label="getting refreshed access token")
-                      self.log.info("bar: %s", resp_json)
                       auth_state['github_access_token'] = resp_json.get('access_token')
                       auth_state['github_refresh_token'] = resp_json.get('refresh_token')
 
-                  # update the secret
+                  await self.update_git_secret(user, auth_state)
+                  return {'auth_state': auth_state}
+
+              async def update_git_secret(self, user, auth_state):
+                  ''' update the git secret '''
                   secret_name = "jupyter-git-secrets-%s" % user.escaped_name
+
+                  self.log.info("Updating git secret: %s", secret_name)
 
                   git_credentials = ""
                   gitlab_access_token = auth_state.get('gitlab_access_token')
                   if gitlab_access_token:
+                      self.log.debug("Adding Gitlab secret")
                       gitlab_url = "https://oauth2:%s@%s" % (gitlab_access_token, gitlab_host)
                       git_credentials += "%s\n" % gitlab_url
 
                   github_access_token = auth_state.get('github_access_token')
                   if github_access_token:
+                      self.log.debug("Adding Github secret")
                       # OAuth App
                       github_url = "https://%s:x-oauth-basic@%s" % (github_access_token, github_host)
                       # Github App
@@ -468,8 +475,6 @@ daskhub:
 
                       # we only have one secret for all notebooks for now
                       break
-
-                  return {'auth_state': auth_state}
 
               async def pre_spawn_start(self, user, spawner):
                   self.log.info('Pre spawn start : %s', user.name)
@@ -558,7 +563,11 @@ daskhub:
                   if gitlab_access_token or github_access_token:
                       secret_name = "jupyter-git-secrets-%s" % user.escaped_name
 
-                      # secret is created in refresh_user() before spawn as well
+                      # user secret refresh and user interaction with external
+                      # resources for sign-in may race each other and leave the
+                      # secrets incomplete at first if we do not forcibly
+                      # update them here
+                      await self.update_git_secret(user, auth_state)
 
                       spawner.volumes.append({
                           'name': 'git-credentials',
