@@ -121,6 +121,7 @@ daskhub:
           from kubernetes.client.models import V1Secret, V1ObjectMeta
           from kubernetes.client.rest import ApiException
           from kubernetes.client import V1DeleteOptions
+          from traitlets import Unicode, default, observe
           import boto3
           import base64
           import uuid
@@ -154,23 +155,19 @@ daskhub:
                       next_url=super().get_next_url(user),
                   )
                   params = dict(state=_serialize_state(state))
-                  return url_concat('/gitlab_creds', params)
-                  #return url_concat('/github_creds', params)
-
-          gitlab_host = "gitlab.example.org"
-          gitlab_base_uri = "https://%s" % gitlab_host
-          gitlab_authorize_url = "%s/oauth/authorize" % gitlab_base_uri
-          gitlab_token_uri = "%s/oauth/token" % gitlab_base_uri
-          gitlab_client_id = "7c64d5c2025a449619ccf262ac0af2642b074021c4097e270423b731858f9acd"
-          gitlab_client_secret = "f9d43f080ec0c44e61e332bc7b8fd377178090f251fe5b44480532e56b65e583"
-          gitlab_redirect_path = "gitlab_creds_callback"
+                  return url_concat(url_path_join(self.hub.server.base_url,
+                      self.authenticator.gitlab_creds_path), params)
+                  #return url_concat(url_path_join(self.hub.server.base_url,
+                  #    self.authenticator.github_creds_path, params)
 
           class GitlabCredsHandler(OAuth2Mixin, BaseHandler):
-              _OAUTH_AUTHORIZE_URL = gitlab_authorize_url
+              @property
+              def _OAUTH_AUTHORIZE_URL(self):
+                  return self.authenticator.gitlab_authorize_url
 
               async def get(self):
                   redirect_uri= "%s://%s%s" % (self.request.protocol, self.request.host,
-                     url_path_join(self.hub.server.base_url, gitlab_redirect_path))
+                     url_path_join(self.hub.server.base_url, self.authenticator.gitlab_redirect_path))
 
                   # PKCE bits stolen from https://github.com/RomeoDespres/pkce/blob/master/pkce/__init__.py
                   code_verifier = secrets.token_urlsafe(96)
@@ -195,7 +192,7 @@ daskhub:
                   )
                   self.authorize_redirect(
                       redirect_uri=redirect_uri,
-                      client_id=gitlab_client_id,
+                      client_id=self.authenticator.gitlab_client_id,
                       scope=['read_repository', 'write_repository', 'api'],
                       extra_params=extra_params,
                       response_type='code',
@@ -206,21 +203,21 @@ daskhub:
                   # stolen from GitlabOAuthenticator but without authentication part
                   code = self.get_argument("code")
                   redirect_uri= "%s://%s%s" % (self.request.protocol, self.request.host,
-                     url_path_join(self.hub.server.base_url, gitlab_redirect_path))
+                     url_path_join(self.hub.server.base_url, self.authenticator.gitlab_redirect_path))
 
                   auth_state = await self.current_user.get_auth_state()
                   code_verifier = auth_state.get('gitlab_code_verifier')
 
                   params = dict(
-                      client_id=gitlab_client_id,
-                      client_secret=gitlab_client_secret,
+                      client_id=self.authenticator.gitlab_client_id,
+                      client_secret=self.authenticator.gitlab_client_secret,
                       code=code,
                       code_verifier=code_verifier,
                       grant_type="authorization_code",
                       redirect_uri=redirect_uri,
                   )
 
-                  url = url_concat(gitlab_token_uri, params)
+                  url = url_concat(self.authenticator.gitlab_token_uri, params)
 
                   req = HTTPRequest(
                       url,
@@ -248,37 +245,19 @@ daskhub:
                   # or chain in the next external resource provider credential
                   # retrieval, propagating state
                   params = dict(state=state)
-                  next_url = url_concat('/github_creds', params)
+                  next_url = url_concat(url_path_join(self.hub.server.base_url,
+                      self.authenticator.github_creds_path), params)
 
                   self.redirect(next_url)
 
-          github_host = "github.com"
-          github_base_uri = "https://%s" % github_host
-          github_authorize_url = "%s/login/oauth/authorize" % github_base_uri
-          github_token_uri = "%s/login/oauth/access_token" % github_base_uri
-          # differences between Github and OAuth apps for our use-case:
-          # - only Github apps support PKCE
-          # - only Github apps receive refresh tokens, access tokens for OAuth
-          #   apps remain valid until explicitly revoked sideband!
-          # - HTTPS URL for cloning is different: Github apps use username
-          #   x-access-token and the access token as password while OAuth apps
-          #   use the token as username.
-          # - Github apps must use an installation access token for git clone
-          # - conclusion: Github apps have the more desireable and complete
-          #   featureset OAuth2-wise but also restrictions tailored towards
-          #   custom apps rather than developer access.
-          github_client_id = "<id>"
-          github_client_secret = "<secret>"
-          #github_client_id = "<id>"
-          #github_client_secret = "<secret>"
-          github_redirect_path = "github_creds_callback"
-
           class GithubCredsHandler(OAuth2Mixin, BaseHandler):
-              _OAUTH_AUTHORIZE_URL = github_authorize_url
+              @property
+              def _OAUTH_AUTHORIZE_URL(self):
+                  return self.authenticator.github_authorize_url
 
               async def get(self):
                   redirect_uri= "%s://%s%s" % (self.request.protocol, self.request.host,
-                     url_path_join(self.hub.server.base_url, github_redirect_path))
+                     url_path_join(self.hub.server.base_url, self.authenticator.github_redirect_path))
 
                   # PKCE is not supported for OAuth2 apps, only Github Apps as of now
 
@@ -305,7 +284,7 @@ daskhub:
                   )
                   self.authorize_redirect(
                       redirect_uri=redirect_uri,
-                      client_id=github_client_id,
+                      client_id=self.authenticator.github_client_id,
                       scope=['repo'],
                       extra_params=extra_params,
                       response_type='code',
@@ -316,21 +295,21 @@ daskhub:
                   # stolen from GitHubOAuthenticator but without authentication part
                   code = self.get_argument("code")
                   redirect_uri= "%s://%s%s" % (self.request.protocol, self.request.host,
-                     url_path_join(self.hub.server.base_url, github_redirect_path))
+                     url_path_join(self.hub.server.base_url, self.authenticator.github_redirect_path))
 
                   #auth_state = await self.current_user.get_auth_state()
                   #code_verifier = auth_state.get('github_code_verifier')
 
                   params = dict(
-                      client_id=github_client_id,
-                      client_secret=github_client_secret,
+                      client_id=self.authenticator.github_client_id,
+                      client_secret=self.authenticator.github_client_secret,
                       code=code,
                       #code_verifier=code_verifier,
                       grant_type="authorization_code",
                       redirect_uri=redirect_uri,
                   )
 
-                  url = url_concat(github_token_uri, params)
+                  url = url_concat(self.authenticator.github_token_uri, params)
 
                   req = HTTPRequest(
                       url,
@@ -357,13 +336,74 @@ daskhub:
           class KubeGenericOAuthenticator(GenericOAuthenticator):
               callback_handler = ChainingOauthCallbackHandler
 
+              gitlab_url_scheme = Unicode("https", config=True)
+              gitlab_host = Unicode("gitlab.com", config=True)
+              gitlab_authorize_path = Unicode("/oauth/authorize", config=True)
+              gitlab_authorize_url = Unicode(config=True)
+
+              @default("gitlab_authorize_url")
+              def _default_gitlab_authorize_url(self):
+                  return "%s://%s%s" % (self.gitlab_url_scheme, self.gitlab_host,
+                     self.gitlab_authorize_path)
+
+              @observe('gitlab_url_scheme', 'gitlab_url_scheme', 'gitlab_authorize_path')
+              def _gitlab_authorize_url_components_changed(self, change):
+                  self.gitlab_authorize_url = self._default_gitlab_authorize_url()
+
+              gitlab_token_path = Unicode("/oauth/token", config=True)
+              gitlab_token_uri = Unicode(config=True)
+              @default("gitlab_token_uri")
+              def _default_gitlab_token_uri(self):
+                  return "%s://%s%s" % (self.gitlab_url_scheme, self.gitlab_host,
+                     self.gitlab_token_path)
+
+              @observe('gitlab_url_scheme', 'gitlab_url_scheme', 'gitlab_token_path')
+              def _gitlab_token_uri_components_changed(self, change):
+                  self.gitlab_token_uri = self._default_gitlab_token_uri()
+
+              gitlab_client_id = Unicode(config=True)
+              gitlab_client_secret = Unicode(config=True)
+              gitlab_creds_path = Unicode("/gitlab_creds", config=True)
+              gitlab_redirect_path = Unicode("/gitlab_creds_callback", config=True)
+
+              github_host = Unicode("github.com", config=True)
+              github_url_scheme = Unicode("https", config=True)
+              github_authorize_path = Unicode("/login/oauth/authorize", config=True)
+              github_authorize_url = Unicode(config=True)
+
+              @default("github_authorize_url")
+              def _default_github_authorize_url(self):
+                  return "%s://%s%s" % (self.github_url_scheme, self.github_host,
+                      self.github_authorize_path)
+
+              @observe('github_url_scheme', 'github_url_scheme', 'github_authorize_path')
+              def _github_authorize_url_components_changed(self, change):
+                  self.github_authorize_url = self._default_github_authorize_url()
+
+              github_token_path = Unicode("/login/oauth/access_token", config=True)
+              github_token_uri = Unicode(config=True)
+
+              @default("github_token_uri")
+              def _default_github_token_uri(self):
+                  return "%s://%s%s" % (self.github_url_scheme, self.github_host,
+                      self.github_token_path)
+
+              @observe('github_url_scheme', 'github_url_scheme', 'github_token_path')
+              def _github_token_uri_components_changed(self, change):
+                  self.github_token_uri = self._default_github_token_uri()
+
+              github_client_id = Unicode(config=True)
+              github_client_secret = Unicode(config=True)
+              github_creds_path = Unicode("/github_creds", config=True)
+              github_redirect_path = Unicode("/github_creds_callback", config=True)
+
               def get_handlers(self, app):
                   handlers = super().get_handlers(app)
                   handlers.extend((
-                    (r'/gitlab_creds', GitlabCredsHandler),
-                    (r'/gitlab_creds_callback', GitlabCredsCallbackHandler),
-                    (r'/github_creds', GithubCredsHandler),
-                    (r'/github_creds_callback', GithubCredsCallbackHandler),
+                    (r'%s' % self.gitlab_creds_path, GitlabCredsHandler),
+                    (r'%s' % self.gitlab_redirect_path, GitlabCredsCallbackHandler),
+                    (r'%s' % self.github_creds_path, GithubCredsHandler),
+                    (r'%s' % self.github_redirect_path, GithubCredsCallbackHandler),
                   ))
                   return handlers
 
@@ -376,11 +416,11 @@ daskhub:
                       params = dict(
                           grant_type="refresh_token",
                           refresh_token=gitlab_refresh_token,
-                          client_id=gitlab_client_id,
-                          client_secret=gitlab_client_secret,
+                          client_id=self.gitlab_client_id,
+                          client_secret=self.gitlab_client_secret,
                       )
 
-                      url = url_concat(gitlab_token_uri, params)
+                      url = url_concat(self.gitlab_token_uri, params)
 
                       req = HTTPRequest(
                           url,
@@ -404,11 +444,11 @@ daskhub:
                       params = dict(
                           grant_type="refresh_token",
                           refresh_token=github_refresh_token,
-                          client_id=github_client_id,
-                          client_secret=github_client_secret,
+                          client_id=self.github_client_id,
+                          client_secret=self.github_client_secret,
                       )
 
-                      url = url_concat(github_token_uri, params)
+                      url = url_concat(self.github_token_uri, params)
 
                       req = HTTPRequest(
                           url,
@@ -435,14 +475,16 @@ daskhub:
                   gitlab_access_token = auth_state.get('gitlab_access_token')
                   if gitlab_access_token:
                       self.log.debug("Adding Gitlab secret")
-                      gitlab_url = "https://oauth2:%s@%s" % (gitlab_access_token, gitlab_host)
+                      gitlab_url = "%s://oauth2:%s@%s" % (self.gitlab_url_scheme,
+                          gitlab_access_token, self.gitlab_host)
                       git_credentials += "%s\n" % gitlab_url
 
                   github_access_token = auth_state.get('github_access_token')
                   if github_access_token:
                       self.log.debug("Adding Github secret")
                       # OAuth App
-                      github_url = "https://%s:x-oauth-basic@%s" % (github_access_token, github_host)
+                      github_url = "%s://%s:x-oauth-basic@%s" % (self.github_url_scheme,
+                          github_access_token, self.github_host)
                       # Github App
                       #github_url = "https://x-access-token:%s@%s" % (github_access_token, github_host)
                       git_credentials += "%s\n" % github_url
@@ -611,6 +653,27 @@ daskhub:
           c.KubeGenericOAuthenticator.userdata_method = 'GET'
           c.KubeGenericOAuthenticator.userdata_params = {'state': 'state'}
           c.KubeGenericOAuthenticator.username_key = 'preferred_username'
+
+          c.KubeGenericOAuthenticator.gitlab_host = "gitlab.example.org"
+          c.KubeGenericOAuthenticator.gitlab_client_id = "<id>"
+          c.KubeGenericOAuthenticator.gitlab_client_secret = "<secret>"
+
+          # differences between Github and OAuth apps for our use-case:
+          # - only Github apps support PKCE
+          # - only Github apps receive refresh tokens, access tokens for OAuth
+          #   apps remain valid until explicitly revoked sideband!
+          # - HTTPS URL for cloning is different: Github apps use username
+          #   x-access-token and the access token as password while OAuth apps
+          #   use the token as username.
+          # - Github apps must use an installation access token for git clone
+          # - conclusion: Github apps have the more desireable and complete
+          #   featureset OAuth2-wise but also restrictions tailored towards
+          #   custom apps rather than developer access.
+          c.KubeGenericOAuthenticator.github_client_id = "<id>"
+          c.KubeGenericOAuthenticator.github_client_secret = "<secret>"
+          #c.KubeGenericOAuthenticator.github_client_id = "<id>"
+          #c.KubeGenericOAuthenticator.github_client_secret = "<secret>"
+
 
   dask-gateway:
   #  traefik:
