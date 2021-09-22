@@ -140,6 +140,8 @@ daskhub:
           c.KubeGenericOAuthenticator.userdata_params = {'state': 'state'}
           c.KubeGenericOAuthenticator.username_key = 'preferred_username'
 
+          c.KubeGenericOAuthenticator.minio_endpoint_url = 'http://192.168.122.92'
+
           c.KubeGenericOAuthenticator.gitlab_host = "gitlab.example.org"
           c.KubeGenericOAuthenticator.gitlab_client_id = "<id>"
           c.KubeGenericOAuthenticator.gitlab_client_secret = "<secret>"

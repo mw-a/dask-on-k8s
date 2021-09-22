@@ -41,6 +41,8 @@ class ChainingOauthCallbackHandler(OAuthCallbackHandler):
 class KubeGenericOAuthenticator(GenericOAuthenticator):
     callback_handler = ChainingOauthCallbackHandler
 
+    minio_endpoint_url = Unicode(config=True)
+
     gitlab_url_scheme = Unicode("https", config=True)
     gitlab_host = Unicode("gitlab.com", config=True)
     gitlab_authorize_path = Unicode("/oauth/authorize", config=True)
@@ -240,7 +242,7 @@ class KubeGenericOAuthenticator(GenericOAuthenticator):
             'sts',
             region_name='us-east-1',
             use_ssl=False,
-            endpoint_url='http://192.168.122.92',
+            endpoint_url=self.minio_endpoint_url,
         )
 
         response = sts_client.assume_role_with_web_identity(
