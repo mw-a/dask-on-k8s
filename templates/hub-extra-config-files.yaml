@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hub-extra-config-files
+data:
+  {{- $files := .Files }}
+  {{- range $key, $val := .Values.jupyter.extraConfigFiles }}
+  {{ $key }}: |
+{{ $files.Get $val | indent 4}}
+  {{- end }}
