@@ -10,7 +10,7 @@ from oauthenticator.oauth2 import OAuthCallbackHandler, _serialize_state
 from kubernetes.client.models import V1Secret, V1ObjectMeta
 from kubernetes.client.rest import ApiException
 from kubernetes.client import V1DeleteOptions
-from traitlets import Unicode, default, observe
+from traitlets import Bool, Unicode, default, observe
 
 
 # jupyter hub auth flow:
@@ -41,6 +41,7 @@ class ChainingOauthCallbackHandler(OAuthCallbackHandler):
 class KubeGenericOAuthenticator(GenericOAuthenticator):
     callback_handler = ChainingOauthCallbackHandler
 
+    minio_enabled = Bool(False, config=True)
     minio_endpoint_url = Unicode(config=True)
 
     gitlab_url_scheme = Unicode("https", config=True)
@@ -238,23 +239,24 @@ class KubeGenericOAuthenticator(GenericOAuthenticator):
         if email:
             spawner.environment['USER_EMAIL'] = email
 
-        sts_client = boto3.client(
-            'sts',
-            region_name='us-east-1',
-            use_ssl=False,
-            endpoint_url=self.minio_endpoint_url,
-        )
+        if self.minio_enabled:
+            sts_client = boto3.client(
+                'sts',
+                region_name='us-east-1',
+                use_ssl=False,
+                endpoint_url=self.minio_endpoint_url,
+            )
 
-        response = sts_client.assume_role_with_web_identity(
-            RoleArn='arn:aws:iam::123456789012:user/svc-internal-api',
-            RoleSessionName='test',
-            WebIdentityToken=access_token,
-            DurationSeconds=3600
-        )
+            response = sts_client.assume_role_with_web_identity(
+                RoleArn='arn:aws:iam::123456789012:user/svc-internal-api',
+                RoleSessionName='test',
+                WebIdentityToken=access_token,
+                DurationSeconds=3600
+            )
 
-        access_key = response['Credentials']['AccessKeyId']
-        secret_key = response['Credentials']['SecretAccessKey']
-        session_token = response['Credentials']['SessionToken']
+            access_key = response['Credentials']['AccessKeyId']
+            secret_key = response['Credentials']['SecretAccessKey']
+            session_token = response['Credentials']['SessionToken']
 
         for c in spawner.extra_containers:
             if c['name'] != "gssproxy":
@@ -279,9 +281,10 @@ class KubeGenericOAuthenticator(GenericOAuthenticator):
         #secret.metadata.owner_references = owner_references
 
         secret.data = {}
-        secret.data['AWS_ACCESS_KEY_ID'] = base64.encodebytes(access_key.encode('ascii')).decode('ascii')
-        secret.data['AWS_SECRET_ACCESS_KEY'] = base64.encodebytes(secret_key.encode('ascii')).decode('ascii')
-        secret.data['AWS_SESSION_TOKEN'] = base64.encodebytes(session_token.encode('ascii')).decode('ascii')
+        if self.minio_enabled:
+            secret.data['AWS_ACCESS_KEY_ID'] = base64.encodebytes(access_key.encode('ascii')).decode('ascii')
+            secret.data['AWS_SECRET_ACCESS_KEY'] = base64.encodebytes(secret_key.encode('ascii')).decode('ascii')
+            secret.data['AWS_SESSION_TOKEN'] = base64.encodebytes(session_token.encode('ascii')).decode('ascii')
 
         try:
             await spawner.asynchronize(
